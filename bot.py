@@ -1099,6 +1099,14 @@ async def admin_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------------- НАПОМИНАНИЯ ----------------------
 def schedule_reminder_for_booking(app, booking_id: int):
     """Запланировать напоминание за день до встречи (если ещё есть время)."""
+    # Если JobQueue не настроен — просто пропускаем напоминание, но не падаем
+    jq = getattr(app, "job_queue", None)
+    if jq is None:
+        logger.warning(
+            "JobQueue is not configured, skipping reminder for booking %s", booking_id
+        )
+        return
+
     row = DB.get_booking(booking_id)
     if not row or row["canceled"] or row["is_block"]:
         return
@@ -1111,13 +1119,12 @@ def schedule_reminder_for_booking(app, booking_id: int):
         # Уже поздно напоминать — пропускаем
         return
 
-    app.job_queue.run_once(
+    jq.run_once(
         reminder_job,
         when=delay,
         data={"booking_id": booking_id},
         name=f"reminder_{booking_id}",
     )
-
 
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     data = context.job.data or {}
@@ -1165,6 +1172,12 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
 async def post_init(app):
     """Вызывается один раз после инициализации приложения — здесь дозапускаем напоминания."""
     logger.info("post_init: планируем напоминания для будущих броней")
+
+    jq = getattr(app, "job_queue", None)
+    if jq is None:
+        logger.warning("JobQueue is not configured, skipping reminders in post_init")
+        return
+
     rows = DB.get_future_bookings()
     for row in rows:
         if row["canceled"] or row["is_block"]:
@@ -1175,13 +1188,12 @@ async def post_init(app):
         delay = (reminder_dt - now()).total_seconds()
         if delay <= 0:
             continue
-        app.job_queue.run_once(
+        jq.run_once(
             reminder_job,
             when=delay,
             data={"booking_id": booking_id},
             name=f"reminder_{booking_id}",
         )
-
 
 # ---------------------- MAIN ----------------------
 def load_admins_and_chat():
