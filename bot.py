@@ -457,7 +457,7 @@ async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"• {interval} — бронь | {who}")
     else:
-        lines = [f"На {d.strftime('%d.%м.%Y')} переговорка {room} свободна целый день ✅"]
+        lines = [f"На {d.strftime('%d.%m.%Y')} переговорка {room} свободна целый день ✅"]
 
     lines.append(
         "\nШаг 3/8. Введите время начала встречи в формате ЧЧ:ММ (например, 15:00)."
