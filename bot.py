@@ -56,6 +56,15 @@ WORK_END_HOUR = 24  # условно до полуночи
 MIN_DURATION_MINUTES = 10
 PLANNING_DAYS = 120
 
+# Админ-блокировка
+(
+    ADMIN_BLOCK_ROOM,
+    ADMIN_BLOCK_DATE,
+    ADMIN_BLOCK_START,
+    ADMIN_BLOCK_END,
+    ADMIN_BLOCK_REASON,
+) = range(20, 25)
+
 # Глобальные объекты
 DB = None
 ADMIN_IDS = set()
@@ -300,12 +309,15 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-async def ensure_private_chat(update: Update) -> bool:
-    """True, если чат приватный. Если нет – отправляет сообщение и возвращает False."""
+async def ensure_private_chat(update: Update, reason: str) -> bool:
+    """
+    True, если чат приватный.
+    Если нет – пишет понятное сообщение с указанием, зачем нужно перейти в личку.
+    """
     chat = update.effective_chat
     if chat.type != Chat.PRIVATE:
         await update.effective_message.reply_text(
-            "Для бронирования переговорки, пожалуйста, напишите мне в личные сообщения 🙂"
+            f"Для {reason} напишите мне, пожалуйста, в личные сообщения 🙂"
         )
         return False
     return True
@@ -313,7 +325,18 @@ async def ensure_private_chat(update: Update) -> bool:
 
 # ---------------------- ХЕНДЛЕРЫ /start и /help ----------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
     user = update.effective_user
+
+    # В группе / супергруппе — тихий режим
+    if chat.type != Chat.PRIVATE:
+        await update.effective_message.reply_text(
+            "Привет! Я бот для бронирования переговорок.\n"
+            "Чтобы работать со мной, напишите мне, пожалуйста, в личные сообщения 🙂"
+        )
+        return
+
+    # В личке — нормальное приветствие с меню
     text = (
         f"Привет, {user.first_name}!\n\n"
         "Я бот для бронирования переговорок «3 этаж» и «4 этаж».\n\n"
@@ -327,6 +350,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+
+    # В группе — только подсказка перейти в личку
+    if chat.type != Chat.PRIVATE:
+        await update.effective_message.reply_text(
+            "Для справки и работы с ботом напишите мне, пожалуйста, в личные сообщения 🙂"
+        )
+        return
+
+    # В личке — подробная помощь + меню
     text = (
         "Как пользоваться ботом:\n\n"
         "• Команда /book или кнопка «Забронировать переговорку» — создать бронь.\n"
@@ -339,7 +372,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------------- ДИАЛОГ БРОНИРОВАНИЯ ----------------------
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await ensure_private_chat(update):
+    if not await ensure_private_chat(update, "бронирования переговорки"):
         return ConversationHandler.END
 
     context.user_data["booking"] = {}
@@ -466,7 +499,6 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     h, m = parsed
     if h <= WORK_START_HOUR and not (h == 0 and m == 0):
-        # Не разрешаем завершение раньше начала рабочего дня, кроме теоретического 00:00
         await update.message.reply_text(
             f"Бронировать можно только с {WORK_START_HOUR:02d}:00 до {WORK_END_HOUR:02d}:00."
         )
@@ -511,9 +543,7 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     lines.append(f"• {interval} — бронь | {who} ({contact})")
                 else:
                     lines.append(f"• {interval} — бронь | {who}")
-        lines.append(
-            "\nПожалуйста, введите другое время начала (ЧЧ:ММ)."
-        )
+        lines.append("\nПожалуйста, введите другое время начала (ЧЧ:ММ).")
         await update.message.reply_text("\n".join(lines))
         return BOOK_START
 
@@ -618,7 +648,7 @@ async def book_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    # Повторная проверка конфликтов (на случай гонок)
+    # Повторная проверка конфликтов (на случай гонок и двойных кликов)
     conflicts = DB.check_conflicts(room, start_dt, end_dt)
     if conflicts:
         await query.edit_message_text(
@@ -639,7 +669,7 @@ async def book_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topic=topic,
     )
 
-    # Запланируем напоминание за 1 день
+    # Запланируем напоминание за 1 день (если JobQueue есть)
     schedule_reminder_for_booking(context.application, booking_id)
 
     # Сообщение пользователю
@@ -680,7 +710,7 @@ async def book_cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # ---------------------- МОИ БРОНИ ----------------------
 async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await ensure_private_chat(update):
+    if not await ensure_private_chat(update, "просмотра ваших броней"):
         return
 
     user = update.effective_user
@@ -688,7 +718,7 @@ async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not rows:
         await update.effective_message.reply_text(
-            "У вас нет активных броней.\nХотите что‑то забронировать? Нажмите «Забронировать переговорку».",
+            "У вас нет активных броней.\nХотите что-то забронировать? Нажмите «Забронировать переговорку».",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -738,7 +768,7 @@ async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # Нельзя отменять после начала встречи (по ТЗ можно до начала)
+    # Нельзя отменять после начала встречи
     start_dt = ts_to_dt(row["start_ts"])
     if now() >= start_dt:
         await update.effective_message.reply_text(
@@ -749,7 +779,7 @@ async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_T
     DB.cancel_booking(booking_id)
     await update.effective_message.reply_text("Бронь отменена ✅")
 
-    # Уведомление в общий чат (минимальное)
+    # Уведомление в общий чат
     if GROUP_CHAT_ID is not None:
         who = row["user_full_name"] or "Неизвестно"
         contact = row["user_contact"] or ""
@@ -796,7 +826,7 @@ async def today_occupancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def busy_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await ensure_private_chat(update):
+    if not await ensure_private_chat(update, "просмотра занятости переговорок"):
         return ConversationHandler.END
 
     keyboard = [
@@ -901,23 +931,13 @@ async def admin_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(text)
 
 
-# Блокировка переговорки (как бронирование с флагом is_block)
-(
-    ADMIN_BLOCK_ROOM,
-    ADMIN_BLOCK_DATE,
-    ADMIN_BLOCK_START,
-    ADMIN_BLOCK_END,
-    ADMIN_BLOCK_REASON,
-) = range(20, 25)
-
-
 async def admin_block_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin(user.id):
         await update.effective_message.reply_text("Команда только для администраторов.")
         return ConversationHandler.END
 
-    if not await ensure_private_chat(update):
+    if not await ensure_private_chat(update, "администрирования переговорок"):
         return ConversationHandler.END
 
     keyboard = [
@@ -967,9 +987,7 @@ async def admin_block_choose_date(update: Update, context: ContextTypes.DEFAULT_
         return ADMIN_BLOCK_DATE
 
     context.user_data["ablock"]["date"] = d
-    await update.message.reply_text(
-        "Введите время начала блокировки (ЧЧ:ММ)."
-    )
+    await update.message.reply_text("Введите время начала блокировки (ЧЧ:ММ).")
     return ADMIN_BLOCK_START
 
 
@@ -1098,12 +1116,15 @@ async def admin_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------------- НАПОМИНАНИЯ ----------------------
 def schedule_reminder_for_booking(app, booking_id: int):
-    """Запланировать напоминание за день до встречи (если ещё есть время)."""
-    # Если JobQueue не настроен — просто пропускаем напоминание, но не падаем
+    """
+    Запланировать напоминание за день до встречи (если ещё есть время).
+    Если JobQueue не настроен — просто логируем и выходим, чтобы не падать.
+    """
     jq = getattr(app, "job_queue", None)
     if jq is None:
         logger.warning(
-            "JobQueue is not configured, skipping reminder for booking %s", booking_id
+            "JobQueue is not configured, skipping reminder for booking %s",
+            booking_id,
         )
         return
 
@@ -1125,6 +1146,7 @@ def schedule_reminder_for_booking(app, booking_id: int):
         data={"booking_id": booking_id},
         name=f"reminder_{booking_id}",
     )
+
 
 async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
     data = context.job.data or {}
@@ -1170,7 +1192,10 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(app):
-    """Вызывается один раз после инициализации приложения — здесь дозапускаем напоминания."""
+    """
+    Вызывается один раз после инициализации приложения — дозапускаем напоминания
+    для уже созданных будущих броней.
+    """
     logger.info("post_init: планируем напоминания для будущих броней")
 
     jq = getattr(app, "job_queue", None)
@@ -1194,6 +1219,13 @@ async def post_init(app):
             data={"booking_id": booking_id},
             name=f"reminder_{booking_id}",
         )
+
+
+# ---------------------- ОБЩИЙ ERROR-HANDLER ----------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Просто логируем исключения, чтобы PTB не ругался, что нет error handlers."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
 
 # ---------------------- MAIN ----------------------
 def load_admins_and_chat():
@@ -1231,6 +1263,9 @@ def main():
         .post_init(post_init)
         .build()
     )
+
+    # Общий error handler
+    app.add_error_handler(error_handler)
 
     # Общие команды
     app.add_handler(CommandHandler("start", start))
