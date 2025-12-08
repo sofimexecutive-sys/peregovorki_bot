@@ -84,7 +84,7 @@ def parse_date(text: str) -> date | None:
     if t in ("завтра", "tomorrow"):
         return date.today() + timedelta(days=1)
     try:
-        return datetime.strptime(text.strip(), "%d.%m.%Y").date()
+       return datetime.strptime(text.strip(), "%d.%m.%Y").date()
     except ValueError:
         return None
 
@@ -317,7 +317,8 @@ async def ensure_private_chat(update: Update, reason: str) -> bool:
     chat = update.effective_chat
     if chat.type != Chat.PRIVATE:
         await update.effective_message.reply_text(
-            f"Для {reason} напишите мне, пожалуйста, в личные сообщения 🙂"
+            f"Для {reason} напишите мне, пожалуйста, в личные сообщения 🙂",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return False
     return True
@@ -328,11 +329,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
-    # В группе / супергруппе — тихий режим
+    # В группе / супергруппе — тихий режим и убираем клавиатуру
     if chat.type != Chat.PRIVATE:
         await update.effective_message.reply_text(
             "Привет! Я бот для бронирования переговорок.\n"
-            "Чтобы работать со мной, напишите мне, пожалуйста, в личные сообщения 🙂"
+            "Чтобы работать со мной, напишите мне, пожалуйста, в личные сообщения 🙂",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -352,10 +354,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
-    # В группе — только подсказка перейти в личку
+    # В группе — только подсказка перейти в личку и убрать клавиатуру
     if chat.type != Chat.PRIVATE:
         await update.effective_message.reply_text(
-            "Для справки и работы с ботом напишите мне, пожалуйста, в личные сообщения 🙂"
+            "Для справки и работы с ботом напишите мне, пожалуйста, в личные сообщения 🙂",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return
 
@@ -454,7 +457,7 @@ async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     lines.append(f"• {interval} — бронь | {who}")
     else:
-        lines = [f"На {d.strftime('%d.%m.%Y')} переговорка {room} свободна целый день ✅"]
+        lines = [f"На {d.strftime('%d.%м.%Y')} переговорка {room} свободна целый день ✅"]
 
     lines.append(
         "\nШаг 3/8. Введите время начала встречи в формате ЧЧ:ММ (например, 15:00)."
@@ -797,6 +800,10 @@ async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_T
 
 # ---------------------- ЗАНЯТОСТЬ ----------------------
 async def today_occupancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Теперь тоже только в личке, чтобы не засорять общий чат
+    if not await ensure_private_chat(update, "просмотра занятости переговорок"):
+        return
+
     d = date.today()
     rows = DB.get_bookings_for_day(None, d)
 
