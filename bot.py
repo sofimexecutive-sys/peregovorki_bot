@@ -3,6 +3,8 @@ import logging
 import os
 import sqlite3
 import time
+import csv
+import io
 from datetime import datetime, date, timedelta
 
 from telegram import (
@@ -273,6 +275,12 @@ class BookingStorage:
             """,
             (start_ts, end_ts),
         )
+        return cur.fetchall()
+
+    def get_all_bookings(self):
+        """Все записи из таблицы bookings, как есть."""
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM bookings ORDER BY start_ts")
         return cur.fetchall()
 
     def check_conflicts(
@@ -1205,6 +1213,225 @@ async def admin_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text("\n".join(lines))
 
+async def export_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выгрузка всей таблицы bookings в CSV. Только для админов, только в личке."""
+    user = update.effective_user
+
+    if not is_admin(user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администраторам."
+        )
+        return
+
+    if not await ensure_private_chat(update, "выгрузки базы бронирований"):
+        return
+
+    rows = DB.get_all_bookings()
+    if not rows:
+        await update.effective_message.reply_text("В базе пока нет ни одной брони.")
+        return
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=",")
+
+    # Заголовки в том же порядке, что и в базе
+    writer.writerow(
+        [
+            "id",
+            "room",
+            "start_ts",
+            "end_ts",
+            "user_id",
+            "user_full_name",
+            "user_contact",
+            "topic",
+            "is_block",
+            "block_reason",
+            "canceled",
+            "canceled_at",
+            "created_at",
+        ]
+    )
+
+    for row in rows:
+        writer.writerow(
+            [
+                row["id"],
+                row["room"],
+                row["start_ts"],
+                row["end_ts"],
+                row["user_id"],
+                row["user_full_name"],
+                row["user_contact"],
+                row["topic"],
+                row["is_block"],
+                row["block_reason"],
+                row["canceled"],
+                row["canceled_at"],
+                row["created_at"],
+            ]
+        )
+
+    output.seek(0)
+    data = output.getvalue().encode("utf-8-sig")
+    file_obj = io.BytesIO(data)
+    file_obj.name = "bookings_export.csv"
+
+    await update.effective_message.reply_document(
+        document=file_obj,
+        filename="bookings_export.csv",
+        caption="Выгрузка всех бронирований (сырой формат БД).",
+    )
+
+async def import_bookings_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запросить у админа CSV для импорта."""
+    user = update.effective_user
+
+    if not is_admin(user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администраторам."
+        )
+        return
+
+    if not await ensure_private_chat(update, "импорта базы бронирований"):
+        return
+
+    context.user_data["awaiting_import_bookings"] = True
+    await update.effective_message.reply_text(
+        "Ок, импорт базы.\n\n"
+        "Пришлите мне *файлом* CSV, который был получен из этой же версии бота "
+        "командой /export_bookings.\n\n"
+        "⚠️ Внимание: текущие бронирования в базе будут *полностью заменены* "
+        "на данные из файла.",
+        parse_mode="Markdown",
+    )
+
+async def import_bookings_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка присланного CSV с бронированиями."""
+    message = update.effective_message
+    user = update.effective_user
+
+    # Фильтр на всякий случай, если кто-то ещё пришлёт csv
+    if not is_admin(user.id):
+        return
+
+    if not context.user_data.get("awaiting_import_bookings"):
+        # Мы сейчас не ждём импорт — можно молча игнорировать
+        return
+
+    doc = message.document
+    if not doc:
+        return
+
+    if not (doc.file_name or "").lower().endswith(".csv"):
+        await message.reply_text("Мне нужен именно .csv файл, который вы выгрузили из бота.")
+        return
+
+    # Скачиваем файл
+    file = await doc.get_file()
+    data = await file.download_as_bytearray()
+    text = data.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text), delimiter=",")
+
+    required_fields = {
+        "id",
+        "room",
+        "start_ts",
+        "end_ts",
+        "user_id",
+        "user_full_name",
+        "user_contact",
+        "topic",
+        "is_block",
+        "block_reason",
+        "canceled",
+        "canceled_at",
+        "created_at",
+    }
+
+    if not reader.fieldnames or not required_fields.issubset(set(reader.fieldnames)):
+        await message.reply_text(
+            "Не получается распознать формат CSV.\n"
+            "Убедитесь, что файл выгружен этой же версией бота через /export_bookings."
+        )
+        return
+
+    conn = DB.conn
+    cur = conn.cursor()
+
+    try:
+        # Чистим таблицу
+        cur.execute("DELETE FROM bookings")
+
+        count = 0
+        for row in reader:
+            # Небольшой хелпер для чисел
+            def to_int(name, allow_none=False):
+                value = (row.get(name) or "").strip()
+                if value == "":
+                    return None if allow_none else 0
+                return int(value)
+
+            room = row.get("room") or ""
+
+            start_ts = to_int("start_ts")
+            end_ts = to_int("end_ts")
+            user_id = to_int("user_id", allow_none=True)
+            user_full_name = row.get("user_full_name") or ""
+            user_contact = row.get("user_contact") or ""
+            topic = row.get("topic") or ""
+            is_block = to_int("is_block")
+            block_reason = row.get("block_reason") or ""
+            canceled = to_int("canceled")
+            canceled_at = to_int("canceled_at", allow_none=True)
+            created_at = to_int("created_at", allow_none=True)
+
+            cur.execute(
+                """
+                INSERT INTO bookings (
+                    room,
+                    start_ts,
+                    end_ts,
+                    user_id,
+                    user_full_name,
+                    user_contact,
+                    topic,
+                    is_block,
+                    block_reason,
+                    canceled,
+                    canceled_at,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    room,
+                    start_ts,
+                    end_ts,
+                    user_id,
+                    user_full_name,
+                    user_contact,
+                    topic,
+                    is_block,
+                    block_reason,
+                    canceled,
+                    canceled_at,
+                    created_at,
+                ),
+            )
+            count += 1
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.exception("Ошибка при импорте бронирований из CSV")
+        await message.reply_text(f"Что-то пошло не так при импорте: {e}")
+        return
+    finally:
+        context.user_data["awaiting_import_bookings"] = False
+
+    await message.reply_text(f"Импорт завершён. Загружено записей: {count}.")
+
 
 # ---------------------- НАПОМИНАНИЯ ----------------------
 def schedule_reminder_for_booking(app, booking_id: int):
@@ -1476,6 +1703,15 @@ def main():
     app.add_handler(admin_block_conv)
 
     app.add_handler(CommandHandler("admin_day", admin_day))
+    app.add_handler(CommandHandler("export_bookings", export_bookings))
+    app.add_handler(CommandHandler("import_bookings", import_bookings_start))
+
+    app.add_handler(
+        MessageHandler(
+            filters.Document.FileExtension("csv"),
+            import_bookings_file,
+        )
+    )
 
     logger.info("Бот запущен. Ожидаю апдейты...")
     app.run_polling()
