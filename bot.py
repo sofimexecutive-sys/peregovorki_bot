@@ -1401,7 +1401,7 @@ async def import_bookings_file(update: Update, context: ContextTypes.DEFAULT_TYP
                     canceled_at,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     room,
