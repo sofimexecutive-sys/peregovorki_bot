@@ -1280,27 +1280,45 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Помощь$"), help_command))
 
     # Бронирование
-    book_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("book", book_start),
-            MessageHandler(filters.Regex("^Забронировать переговорку$"), book_start),
+   book_conv = ConversationHandler(
+    entry_points=[
+        CommandHandler("book", book_start),
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND
+            & filters.Regex("Забронировать переговорку"),
+            book_start,
+        ),
+    ],
+    states={
+        BOOK_ROOM: [
+            CallbackQueryHandler(book_choose_room, pattern="^ROOM_")
         ],
-        states={
-            BOOK_ROOM: [CallbackQueryHandler(book_choose_room, pattern="^ROOM_")],
-            BOOK_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_date)],
-            BOOK_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_start)],
-            BOOK_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_end)],
-            BOOK_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_topic)],
-            BOOK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)],
-            BOOK_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, book_contact)],
-            BOOK_CONFIRM: [
-                CallbackQueryHandler(book_confirm, pattern="^CONFIRM_")
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", book_cancel_command)],
-        name="booking_conversation",
-    )
-    app.add_handler(book_conv)
+        BOOK_DATE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_date)
+        ],
+        BOOK_START: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_start)
+        ],
+        BOOK_END: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_end)
+        ],
+        BOOK_TOPIC: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_topic)
+        ],
+        BOOK_NAME: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)
+        ],
+        BOOK_CONTACT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, book_contact)
+        ],
+        BOOK_CONFIRM: [
+            CallbackQueryHandler(book_confirm, pattern="^CONFIRM_")
+        ],
+    },
+    fallbacks=[CommandHandler("cancel", book_cancel_command)],
+    name="booking_conversation",
+)
 
     # Мои брони / отмена
     app.add_handler(CommandHandler("my", my_bookings))
