@@ -1280,45 +1280,46 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Помощь$"), help_command))
 
     # Бронирование
-   book_conv = ConversationHandler(
-    entry_points=[
-        CommandHandler("book", book_start),
-        MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND
-            & filters.Regex("Забронировать переговорку"),
-            book_start,
-        ),
-    ],
-    states={
-        BOOK_ROOM: [
-            CallbackQueryHandler(book_choose_room, pattern="^ROOM_")
+    book_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("book", book_start),
+            MessageHandler(
+                filters.TEXT
+                & ~filters.COMMAND
+                & filters.Regex("Забронировать переговорку"),
+                book_start,
+            ),
         ],
-        BOOK_DATE: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_date)
-        ],
-        BOOK_START: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_start)
-        ],
-        BOOK_END: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_end)
-        ],
-        BOOK_TOPIC: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_topic)
-        ],
-        BOOK_NAME: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)
-        ],
-        BOOK_CONTACT: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, book_contact)
-        ],
-        BOOK_CONFIRM: [
-            CallbackQueryHandler(book_confirm, pattern="^CONFIRM_")
-        ],
-    },
-    fallbacks=[CommandHandler("cancel", book_cancel_command)],
-    name="booking_conversation",
-)
+        states={
+            BOOK_ROOM: [
+                CallbackQueryHandler(book_choose_room, pattern="^ROOM_")
+            ],
+            BOOK_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_date)
+            ],
+            BOOK_START: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_start)
+            ],
+            BOOK_END: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_choose_end)
+            ],
+            BOOK_TOPIC: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_topic)
+            ],
+            BOOK_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_name)
+            ],
+            BOOK_CONTACT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, book_contact)
+            ],
+            BOOK_CONFIRM: [
+                CallbackQueryHandler(book_confirm, pattern="^CONFIRM_")
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", book_cancel_command)],
+        name="booking_conversation",
+    )
+    app.add_handler(book_conv)
 
     # Мои брони / отмена
     app.add_handler(CommandHandler("my", my_bookings))
@@ -1332,8 +1333,12 @@ def main():
     busy_conv = ConversationHandler(
         entry_points=[CommandHandler("busy", busy_start)],
         states={
-            BUSY_ROOM: [CallbackQueryHandler(busy_choose_room, pattern="^BUSY_")],
-            BUSY_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, busy_choose_date)],
+            BUSY_ROOM: [
+                CallbackQueryHandler(busy_choose_room, pattern="^BUSY_")
+            ],
+            BUSY_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, busy_choose_date)
+            ],
         },
         fallbacks=[CommandHandler("cancel", busy_cancel_command)],
         name="busy_conversation",
@@ -1342,6 +1347,7 @@ def main():
 
     # Админ
     app.add_handler(CommandHandler("admin", admin_info))
+
     admin_block_conv = ConversationHandler(
         entry_points=[CommandHandler("admin_block", admin_block_start)],
         states={
@@ -1365,6 +1371,7 @@ def main():
         name="admin_block_conversation",
     )
     app.add_handler(admin_block_conv)
+
     app.add_handler(CommandHandler("admin_day", admin_day))
 
     logger.info("Бот запущен. Ожидаю апдейты...")
