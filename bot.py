@@ -260,6 +260,21 @@ class BookingStorage:
         """Для админа — все брони за день."""
         return self.get_bookings_for_day(None, d)
 
+    def get_bookings_for_range(self, start_ts: int, end_ts: int):
+        """Все брони и блокировки в заданном диапазоне [start_ts, end_ts]."""
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT * FROM bookings
+            WHERE canceled = 0
+              AND start_ts >= ?
+              AND start_ts <= ?
+            ORDER BY start_ts, room
+            """,
+            (start_ts, end_ts),
+        )
+        return cur.fetchall()
+
     def check_conflicts(
         self,
         room: str,
@@ -304,6 +319,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         ["Забронировать переговорку"],
         ["Мои брони", "Занятость на сегодня"],
+        ["Занятость на ближайший месяц"],
         ["Помощь"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -367,7 +383,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Как пользоваться ботом:\n\n"
         "• Команда /book или кнопка «Забронировать переговорку» — создать бронь.\n"
         "• «Мои брони» — список ваших активных встреч.\n"
-        "• «Занятость на сегодня» — кто и когда занял переговорки сегодня.\n\n"
+        "• «Занятость на сегодня» — кто и когда занял переговорки сегодня.\n"
+        "• «Занятость на ближайший месяц» — все брони на ближайшие 30 дней.\n\n"
         "Все шаги бронирования проходят в личном чате, чтобы не спамить общий чат 🙂"
     )
     await update.effective_message.reply_text(text, reply_markup=main_menu_keyboard())
@@ -831,6 +848,74 @@ async def today_occupancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
 
+async def month_occupancy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Только в личке, чтобы не засорять общий чат
+    if not await ensure_private_chat(update, "просмотра занятости на месяц"):
+        return
+
+    today = date.today()
+    start_dt = datetime(today.year, today.month, today.day, 0, 0)
+    end_dt = start_dt + timedelta(days=30)  # ближайшие 30 дней
+
+    start_ts = dt_to_ts(start_dt)
+    end_ts = dt_to_ts(end_dt)
+
+    rows = DB.get_bookings_for_range(start_ts, end_ts)
+
+    if not rows:
+        await update.effective_message.reply_text(
+            "На ближайший месяц переговорки свободны 🎉",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    period_text = f"{start_dt.strftime('%d.%m.%Y')}–{end_dt.strftime('%d.%m.%Y')}"
+    header = f"Занятость на ближайший месяц ({period_text}):\n"
+
+    # Следим за длиной сообщения, чтобы не вылезти за лимит Телеги
+    max_len = 3500
+    text = header
+    current_date_str = None
+
+    for row in rows:
+        start_dt_row = ts_to_dt(row["start_ts"])
+        end_dt_row = ts_to_dt(row["end_ts"])
+        date_str = start_dt_row.strftime("%d.%m.%Y")
+
+        if date_str != current_date_str:
+            current_date_str = date_str
+            line = f"\n{date_str}:\n"
+            if len(text) + len(line) > max_len:
+                await update.effective_message.reply_text(text)
+                text = ""
+            text += line
+
+        room = row["room"]
+        interval = f"{start_dt_row.strftime('%H:%M')}–{end_dt_row.strftime('%H:%M')}"
+
+        if row["is_block"]:
+            reason = row["block_reason"] or "блокировка"
+            line = f"{room}: {interval} — блокировка ({reason})\n"
+        else:
+            who = row["user_full_name"] or "Неизвестно"
+            contact = row["user_contact"] or ""
+            topic = row["topic"] or "—"
+            if contact:
+                line = (
+                    f"{room}: {interval} — бронь | {who} ({contact}), тема: {topic}\n"
+                )
+            else:
+                line = f"{room}: {interval} — бронь | {who}, тема: {topic}\n"
+
+        if len(text) + len(line) > max_len:
+            await update.effective_message.reply_text(text)
+            text = ""
+        text += line
+
+    if text:
+        await update.effective_message.reply_text(
+            text, reply_markup=main_menu_keyboard()
+        )
 
 async def busy_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private_chat(update, "просмотра занятости переговорок"):
@@ -1328,7 +1413,24 @@ def main():
 
     # Занятость
     app.add_handler(CommandHandler("today", today_occupancy))
-    app.add_handler(MessageHandler(filters.Regex("^Занятость на сегодня$"), today_occupancy))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND
+            & filters.Regex("Занятость на сегодня"),
+            today_occupancy,
+        )
+    )
+
+    app.add_handler(CommandHandler("month", month_occupancy))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND
+            & filters.Regex("Занятость на ближайший месяц"),
+            month_occupancy,
+        )
+    )
 
     busy_conv = ConversationHandler(
         entry_points=[CommandHandler("busy", busy_start)],
@@ -1344,6 +1446,7 @@ def main():
         name="busy_conversation",
     )
     app.add_handler(busy_conv)
+
 
     # Админ
     app.add_handler(CommandHandler("admin", admin_info))
