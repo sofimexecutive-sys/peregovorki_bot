@@ -1299,11 +1299,10 @@ async def import_bookings_start(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["awaiting_import_bookings"] = True
     await update.effective_message.reply_text(
         "Ок, импорт базы.\n\n"
-        "Пришлите мне *файлом* CSV, который был получен из этой же версии бота "
+        "Пришлите мне файлом CSV, который был получен из этой же версии бота "
         "командой /export_bookings.\n\n"
-        "⚠️ Внимание: текущие бронирования в базе будут *полностью заменены* "
-        "на данные из файла.",
-        parse_mode="Markdown",
+        "Внимание: текущие бронирования в базе будут полностью заменены "
+        "на данные из файла."
     )
 
 async def import_bookings_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
