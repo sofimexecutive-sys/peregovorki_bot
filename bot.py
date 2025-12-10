@@ -1568,30 +1568,55 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ← сюда вставляем reschedule_all_booking_reminders
 def reschedule_all_booking_reminders(app) -> int:
-    """Удалить все задачи в JobQueue и заново поставить напоминания
-    для всех будущих (не отменённых) бронирований.
-    Возвращает количество поставленных напоминаний.
     """
-    job_queue = app.job_queue
-
-    # 1. Чистим все существующие задачи (у нас JobQueue используется только для напоминаний)
-    for job in job_queue.jobs():
-        job.schedule_removal()
-
+    Пересоздаём все напоминания для будущих, не отменённых броней.
+    Используется:
+    • при запуске бота (post_init)
+    • по админской команде /admin_reschedule_reminders
+    Возвращает количество созданных задач в job_queue.
+    """
     now_ts = int(time.time())
 
-    conn = storage.conn
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id FROM bookings WHERE canceled = 0 AND start_ts > ?",
+    # 1. Сначала удаляем старые задачи-напоминания, чтобы не было дублей
+    for job in app.job_queue.jobs():
+        if job.name and job.name.startswith("booking_reminder_"):
+            job.schedule_removal()
+
+    # 2. Читаем из базы все будущие, не отменённые брони
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, room, start_ts, end_ts, user_full_name, user_contact, topic
+        FROM bookings
+        WHERE canceled = 0 AND start_ts > ?
+        """,
         (now_ts,),
     )
-    rows = cur.fetchall()
+    rows = cursor.fetchall()
+    conn.close()
 
+    # 3. Для каждой брони создаём задачу в job_queue
     count = 0
-    for row in rows:
-        booking_id = row["id"]  # у нас row_factory = sqlite3.Row
-        schedule_reminder_for_booking(app, booking_id)
+    for (
+        booking_id,
+        room,
+        start_ts,
+        end_ts,
+        user_full_name,
+        user_contact,
+        topic,
+    ) in rows:
+        schedule_reminder_for_booking(
+            app=app,
+            booking_id=booking_id,
+            room=room,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            user_full_name=user_full_name,
+            user_contact=user_contact,
+            topic=topic,
+        )
         count += 1
 
     return count
