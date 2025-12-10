@@ -1567,7 +1567,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception while handling an update:", exc_info=context.error)
 
 # ← сюда вставляем reschedule_all_booking_reminders
-def reschedule_all_booking_reminders(app: Application) -> int:
+def reschedule_all_booking_reminders(app) -> int:
     """Удалить все задачи в JobQueue и заново поставить напоминания
     для всех будущих (не отменённых) бронирований.
     Возвращает количество поставленных напоминаний.
