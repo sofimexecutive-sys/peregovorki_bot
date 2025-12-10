@@ -1030,6 +1030,28 @@ async def admin_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.effective_message.reply_text(text)
 
+async def admin_reschedule_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пересоздать все напоминания для будущих броней (только для админов)."""
+    user = update.effective_user
+
+    if not is_admin(user.id):
+        await update.effective_message.reply_text(
+            "Эта команда доступна только администраторам."
+        )
+        return
+
+    if not await ensure_private_chat(update, "пересоздания напоминаний"):
+        return
+
+    await update.effective_message.reply_text(
+        "Пересоздаю напоминания для всех будущих броней..."
+    )
+
+    count = reschedule_all_booking_reminders(context.application)
+
+    await update.effective_message.reply_text(
+        f"Готово. Поставлены напоминания для {count} будущих броней."
+    )
 
 async def admin_block_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1544,6 +1566,36 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Просто логируем исключения, чтобы PTB не ругался, что нет error handlers."""
     logger.error("Exception while handling an update:", exc_info=context.error)
 
+# ← сюда вставляем reschedule_all_booking_reminders
+def reschedule_all_booking_reminders(app: Application) -> int:
+    """Удалить все задачи в JobQueue и заново поставить напоминания
+    для всех будущих (не отменённых) бронирований.
+    Возвращает количество поставленных напоминаний.
+    """
+    job_queue = app.job_queue
+
+    # 1. Чистим все существующие задачи (у нас JobQueue используется только для напоминаний)
+    for job in job_queue.jobs():
+        job.schedule_removal()
+
+    now_ts = int(time.time())
+
+    conn = storage.conn
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM bookings WHERE canceled = 0 AND start_ts > ?",
+        (now_ts,),
+    )
+    rows = cur.fetchall()
+
+    count = 0
+    for row in rows:
+        booking_id = row["id"]  # у нас row_factory = sqlite3.Row
+        schedule_reminder_for_booking(app, booking_id)
+        count += 1
+
+    return count
+
 
 # ---------------------- MAIN ----------------------
 def load_admins_and_chat():
@@ -1676,6 +1728,7 @@ def main():
 
     # Админ
     app.add_handler(CommandHandler("admin", admin_info))
+    app.add_handler(CommandHandler("admin_reschedule_reminders", admin_reschedule_reminders))
 
     admin_block_conv = ConversationHandler(
         entry_points=[CommandHandler("admin_block", admin_block_start)],
