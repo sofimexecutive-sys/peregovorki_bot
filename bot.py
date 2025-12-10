@@ -1575,50 +1575,29 @@ def reschedule_all_booking_reminders(app) -> int:
     • по админской команде /admin_reschedule_reminders
     Возвращает количество созданных задач в job_queue.
     """
-    now_ts = int(time.time())
+    jq = getattr(app, "job_queue", None)
+    if jq is None:
+        logger.warning("JobQueue is not configured, skipping reschedule")
+        return 0
 
-    # 1. Сначала удаляем старые задачи-напоминания, чтобы не было дублей
-    for job in app.job_queue.jobs():
-        if job.name and job.name.startswith("booking_reminder_"):
+    # 1. Удаляем все старые задачи-напоминания
+    for job in jq.jobs():
+        if job.name and job.name.startswith("reminder_"):
             job.schedule_removal()
 
-    # 2. Читаем из базы все будущие, не отменённые брони
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, room, start_ts, end_ts, user_full_name, user_contact, topic
-        FROM bookings
-        WHERE canceled = 0 AND start_ts > ?
-        """,
-        (now_ts,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    # 2. Берём из БД все будущие, не отменённые и не блокировки
+    rows = DB.get_future_bookings()
 
-    # 3. Для каждой брони создаём задачу в job_queue
     count = 0
-    for (
-        booking_id,
-        room,
-        start_ts,
-        end_ts,
-        user_full_name,
-        user_contact,
-        topic,
-    ) in rows:
-        schedule_reminder_for_booking(
-            app=app,
-            booking_id=booking_id,
-            room=room,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            user_full_name=user_full_name,
-            user_contact=user_contact,
-            topic=topic,
-        )
+    for row in rows:
+        if row["canceled"] or row["is_block"]:
+            continue
+
+        booking_id = row["id"]
+        schedule_reminder_for_booking(app, booking_id)
         count += 1
 
+    logger.info("Rescheduled reminders for %s future bookings", count)
     return count
 
 
