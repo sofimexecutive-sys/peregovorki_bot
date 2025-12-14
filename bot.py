@@ -68,9 +68,15 @@ PLANNING_DAYS = 120
 ) = range(20, 25)
 
 # Глобальные объекты
-DB = None
+# Глобальные объекты
 ADMIN_IDS = set()
 GROUP_CHAT_ID = None
+
+# Путь к базе брони
+# По умолчанию — файл рядом с ботом, но в проде задаём через переменную окружения DB_PATH
+DB_PATH = os.getenv("DB_PATH", "bookings.sqlite3")
+
+DB = None
 
 
 # ---------------------- ХЕЛПЕРЫ ПО ВРЕМЕНИ ----------------------
@@ -1626,8 +1632,7 @@ def main():
     if not token:
         raise RuntimeError("Не задан BOT_TOKEN в переменных окружения.")
 
-    DB_PATH = os.getenv("DB_PATH", "/_data/bookings.sqlite3")
-    DB = BookingStorage(db_path)
+    DB = BookingStorage(DB_PATH)
 
     load_admins_and_chat()
 
