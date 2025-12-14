@@ -1626,7 +1626,7 @@ def main():
     if not token:
         raise RuntimeError("Не задан BOT_TOKEN в переменных окружения.")
 
-    db_path = os.getenv("DB_PATH", "bookings.sqlite3")
+    DB_PATH = os.getenv("DB_PATH", "/_data/bookings.sqlite3")
     DB = BookingStorage(db_path)
 
     load_admins_and_chat()
