@@ -399,6 +399,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• «Мои брони» — список ваших активных встреч.\n"
         "• «Занятость на сегодня» — кто и когда занял переговорки сегодня.\n"
         "• «Занятость на ближайший месяц» — все брони на ближайшие 30 дней.\n\n"
+        "• Удалить бронь — команда /del <ID>. ID видно в списке «Мои брони».\n"
         "Все шаги бронирования проходят в личном чате, чтобы не спамить общий чат 🙂"
     )
     await update.effective_message.reply_text(text, reply_markup=main_menu_keyboard())
@@ -742,36 +743,46 @@ async def book_cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 
-# ---------------------- МОИ БРОНИ ----------------------
-async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await ensure_private_chat(update, "просмотра ваших броней"):
-        return
+# ---------------- Мои брони ----------------
 
+async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    rows = DB.get_user_future_bookings(user.id)
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, room, start_ts, end_ts, topic
+        FROM bookings
+        WHERE user_id = ? AND canceled = 0
+        ORDER BY start_ts
+        """,
+        (user.id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
 
     if not rows:
-        await update.effective_message.reply_text(
-            "У вас нет активных броней.\nХотите что-то забронировать? Нажмите «Забронировать переговорку».",
-            reply_markup=main_menu_keyboard(),
-        )
+        await update.message.reply_text("У тебя нет активных броней.")
         return
 
-    lines = ["Ваши активные брони:\n"]
-    for row in rows:
-        dt_str = format_dt_range(row["start_ts"], row["end_ts"])
-        room = row["room"]
-        topic = row["topic"] or "—"
-        lines.append(f"ID {row['id']}: {dt_str}, {room}, тема: {topic}")
+    lines = []
+    for booking_id, room, start_ts, end_ts, topic in rows:
+        start = dt.fromtimestamp(start_ts)
+        end = dt.fromtimestamp(end_ts)
+        date_str = start.strftime("%d.%m.%Y")
+        time_str = f"{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
+        lines.append(
+            f"#{booking_id}: {date_str}, {time_str}, {room} — тема: {topic or '—'}"
+        )
 
-    lines.append(
-        "\nЧтобы отменить бронь, отправьте команду:\n"
-        "/cancel_booking <ID>\n"
-        "Например: /cancel_booking 12"
+    text = (
+        "Твои активные брони:\n\n"
+        + "\n".join(lines)
+        + "\n\nЧтобы отменить бронь, отправь команду:\n"
+        "/del <ID_брони> (без скобок)."
     )
-
-    await update.effective_message.reply_text("\n".join(lines))
-
+    await update.message.reply_text(text)
 
 async def cancel_booking_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1241,6 +1252,76 @@ async def admin_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.effective_message.reply_text("\n".join(lines))
 
+# ---------------- Удаление брони по ID ----------------
+
+async def delete_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    is_admin = user.id in ADMIN_IDS
+
+    if not context.args:
+        await update.message.reply_text(
+            "Напиши команду в формате:\n"
+            "/del <ID_брони>\n\n"
+            "ID можно посмотреть в списке «Мои брони»."
+        )
+        return
+
+    try:
+        booking_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID брони должен быть числом. Пример: /del 12")
+        return
+
+    now_ts = int(time.time())
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    if is_admin:
+        # Админ может удалить любую бронь
+        cursor.execute(
+            """
+            UPDATE bookings
+            SET canceled = 1, canceled_at = ?
+            WHERE id = ? AND canceled = 0
+            """,
+            (now_ts, booking_id),
+        )
+    else:
+        # Обычный пользователь — только свои
+        cursor.execute(
+            """
+            UPDATE bookings
+            SET canceled = 1, canceled_at = ?
+            WHERE id = ? AND user_id = ? AND canceled = 0
+            """,
+            (now_ts, booking_id, user.id),
+        )
+
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+
+    if updated == 0:
+        if is_admin:
+            msg = "Не нашла активную бронь с таким ID."
+        else:
+            msg = (
+                "Не нашла активную бронь с таким ID, созданную от твоего имени.\n"
+                "Проверь ID в списке «Мои брони»."
+            )
+        await update.message.reply_text(msg)
+        return
+
+    # Убираем напоминания, если они есть
+    jobs_removed = 0
+    for job in context.application.job_queue.get_jobs_by_name(f"reminder_{booking_id}"):
+        job.schedule_removal()
+        jobs_removed += 1
+    logger.info("Deleted booking %s, removed %s reminder jobs", booking_id, jobs_removed)
+
+    await update.message.reply_text("Готово, бронь удалена.")
+
 async def export_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выгрузка всей таблицы bookings в CSV. Только для админов, только в личке."""
     user = update.effective_user
@@ -1697,6 +1778,7 @@ def main():
     app.add_handler(CommandHandler("my", my_bookings))
     app.add_handler(MessageHandler(filters.Regex("^Мои брони$"), my_bookings))
     app.add_handler(CommandHandler("cancel_booking", cancel_booking_command))
+    app.add_handler(CommandHandler(["del", "cancel_booking"], delete_booking))
 
     # Занятость
     app.add_handler(CommandHandler("today", today_occupancy))
