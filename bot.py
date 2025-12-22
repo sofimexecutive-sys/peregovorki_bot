@@ -458,7 +458,7 @@ async def book_choose_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["booking"]["room"] = room
     await query.edit_message_text(
         f"Шаг 2/8. Вы выбрали: {room}\n\n"
-        "Введите дату в формате ДД.ММ.ГГГГ или отправьте «Сегодня» / «Завтра».",
+        "Введите дату в формате ДД.ММ.ГГГГ или отправьте «Сегодня» / «Завтра»."
         + BACK_HINT,
         reply_markup=None,
     )
@@ -543,7 +543,7 @@ async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking = context.user_data.get("booking", {})
         booking.pop("start_ts", None)
         await update.message.reply_text(
-            "Шаг 2/8. Введите дату встречи в формате ДД.ММ или словом «сегодня»/«завтра».",
+            "Шаг 2/8. Введите дату встречи в формате ДД.ММ или словом «сегодня»/«завтра»."
             + BACK_HINT
         )
         return BOOK_DATE
@@ -579,7 +579,7 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking = context.user_data.get("booking", {})
         booking.pop("end_ts", None)
         await update.message.reply_text(
-            "Шаг 3/8. Введите время начала встречи (по Москве), например 10:00.",
+            "Шаг 3/8. Введите время начала встречи (по Москве), например 10:00."
             + BACK_HINT
         )
         return BOOK_START
@@ -657,7 +657,7 @@ async def book_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking = context.user_data.get("booking", {})
         booking.pop("topic", None)
         await update.message.reply_text(
-            "Шаг 4/8. Введите время окончания встречи (по Москве), например 12:00.",
+            "Шаг 4/8. Введите время окончания встречи (по Москве), например 12:00."
             + BACK_HINT
         )
         return BOOK_END
@@ -680,7 +680,7 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking.pop("user_full_name", None)
         await update.message.reply_text(
             "Шаг 5/8. Кратко опишите тему встречи. "
-            "Если темы нет, можно оставить дефис «-».",
+            "Если темы нет, можно оставить дефис «-»."
             + BACK_HINT
         )
         return BOOK_TOPIC
@@ -696,7 +696,7 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username_hint = f"@{user.username}" if user.username else "ник в Telegram"
     await update.message.reply_text(
         "Шаг 7/8. Введите ваш ник в Telegram (без @) или телефон.\n"
-        f"Если хотите использовать {username_hint}, отправьте «-».",
+        f"Если хотите использовать {username_hint}, отправьте «-»."
         + BACK_HINT
     )
     return BOOK_CONTACT
@@ -709,7 +709,7 @@ async def book_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking.pop("user_contact", None)
         await update.message.reply_text(
             "Шаг 6/8. Введите фамилию и имя участника встречи "
-            "(или того, кто отвечает за бронь).",
+            "(или того, кто отвечает за бронь)."
             + BACK_HINT
         )
         return BOOK_NAME
@@ -841,33 +841,24 @@ async def book_cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def my_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, room, start_ts, end_ts, topic
-        FROM bookings
-        WHERE user_id = ? AND canceled = 0
-        ORDER BY start_ts
-        """,
-        (user.id,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
+    rows = DB.get_user_future_bookings(user.id)
 
     if not rows:
         await update.message.reply_text("У тебя нет активных броней.")
         return
 
     lines = []
-    for booking_id, room, start_ts, end_ts, topic in rows:
-        start = dt.fromtimestamp(start_ts)
-        end = dt.fromtimestamp(end_ts)
+    for row in rows:
+        booking_id = row["id"]
+        room = row["room"]
+        start = ts_to_dt(row["start_ts"])
+        end = ts_to_dt(row["end_ts"])
+        topic = row["topic"] or "—"
+
         date_str = start.strftime("%d.%m.%Y")
         time_str = f"{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
         lines.append(
-            f"#{booking_id}: {date_str}, {time_str}, {room} — тема: {topic or '—'}"
+            f"#{booking_id}: {date_str}, {time_str}, {room} — тема: {topic}"
         )
 
     text = (
@@ -1868,12 +1859,11 @@ def main():
     )
     app.add_handler(book_conv)
 
-    # Мои брони / отмена
+   # Мои брони / отмена
     app.add_handler(CommandHandler("my", my_bookings))
     app.add_handler(MessageHandler(filters.Regex("^Мои брони$"), my_bookings))
-    app.add_handler(CommandHandler("cancel_booking", cancel_booking_command))
     app.add_handler(CommandHandler(["del", "cancel_booking"], delete_booking))
-
+    
     # Занятость
     app.add_handler(CommandHandler("today", today_occupancy))
     app.add_handler(
