@@ -67,6 +67,8 @@ PLANNING_DAYS = 120
     ADMIN_BLOCK_REASON,
 ) = range(20, 25)
 
+BACK_WORDS = {"назад", "⬅️ назад", "назад ⬅️", "/back"}
+
 # Глобальные объекты
 # Глобальные объекты
 ADMIN_IDS = set()
@@ -74,7 +76,7 @@ GROUP_CHAT_ID = None
 
 # Путь к базе брони
 # По умолчанию — файл рядом с ботом, но в проде задаём через переменную окружения DB_PATH
-DB_PATH = os.getenv("DB_PATH", "bookings.sqlite3")
+DB_PATH = os.getenv("DB_PATH", "/_data/bookings.sqlite3")
 
 DB = None
 
@@ -400,12 +402,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• «Занятость на сегодня» — кто и когда занял переговорки сегодня.\n"
         "• «Занятость на ближайший месяц» — все брони на ближайшие 30 дней.\n\n"
         "• Удалить бронь — команда /del <ID>. ID видно в списке «Мои брони».\n"
+        "• На любом шаге бронирования можно написать «Назад», чтобы вернуться на предыдущий шаг.\n"
         "Все шаги бронирования проходят в личном чате, чтобы не спамить общий чат 🙂"
     )
     await update.effective_message.reply_text(text, reply_markup=main_menu_keyboard())
 
 
 # ---------------------- ДИАЛОГ БРОНИРОВАНИЯ ----------------------
+
+def is_back_message(update: Update) -> bool:
+    """
+    Возвращает True, если пользователь хочет вернуться на предыдущий шаг.
+    """
+    if not getattr(update, "message", None) or not update.message.text:
+        return False
+    return update.message.text.strip().lower() in BACK_WORDS
+
+
 async def book_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await ensure_private_chat(update, "бронирования переговорки"):
         return ConversationHandler.END
@@ -449,6 +462,25 @@ async def book_choose_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к выбору переговорки
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("room", None)
+        keyboard = [
+            [
+                InlineKeyboardButton("3 этаж", callback_data="ROOM_ROOM3"),
+                InlineKeyboardButton("4 этаж", callback_data="ROOM_ROOM4"),
+            ],
+            [
+                InlineKeyboardButton("Отмена", callback_data="ROOM_CANCEL"),
+            ],
+        ]
+        await update.message.reply_text(
+            "Шаг 1/8. Выберите переговорку (можно выбрать другую):",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return BOOK_ROOM
+
     d = parse_date(update.message.text)
     if not d:
         await update.message.reply_text(
@@ -500,6 +532,15 @@ async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к вводу даты
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("start_ts", None)
+        await update.message.reply_text(
+            "Шаг 2/8. Введите дату встречи в формате ДД.ММ или словом «сегодня»/«завтра».",
+        )
+        return BOOK_DATE
+
     parsed = parse_time(update.message.text)
     if not parsed:
         await update.message.reply_text(
@@ -525,6 +566,15 @@ async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к вводу времени начала
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("end_ts", None)
+        await update.message.reply_text(
+            "Шаг 3/8. Введите время начала встречи (по Москве), например 10:00.",
+        )
+        return BOOK_START
+
     parsed = parse_time(update.message.text)
     if not parsed:
         await update.message.reply_text(
@@ -592,6 +642,15 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к вводу времени окончания
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("topic", None)
+        await update.message.reply_text(
+            "Шаг 4/8. Введите время окончания встречи (по Москве), например 12:00.",
+        )
+        return BOOK_END
+
     text = update.message.text.strip()
     topic = None if text in ("-", "—", "") else text
     context.user_data["booking"]["topic"] = topic
@@ -603,6 +662,16 @@ async def book_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к вводу темы встречи
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("user_full_name", None)
+        await update.message.reply_text(
+            "Шаг 5/8. Кратко опишите тему встречи. "
+            "Если темы нет, можно оставить дефис «-».",
+        )
+        return BOOK_TOPIC
+
     full_name = update.message.text.strip()
     if not full_name:
         await update.message.reply_text("Пожалуйста, введите фамилию и имя.")
@@ -620,6 +689,16 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def book_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Пользователь может вернуться к вводу имени
+    if is_back_message(update):
+        booking = context.user_data.get("booking", {})
+        booking.pop("user_contact", None)
+        await update.message.reply_text(
+            "Шаг 6/8. Введите фамилию и имя участника встречи "
+            "(или того, кто отвечает за бронь).",
+        )
+        return BOOK_NAME
+
     text = update.message.text.strip()
     user = update.effective_user
 
