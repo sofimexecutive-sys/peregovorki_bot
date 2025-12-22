@@ -543,7 +543,7 @@ async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking = context.user_data.get("booking", {})
         booking.pop("start_ts", None)
         await update.message.reply_text(
-            "Шаг 2/8. Введите дату встречи в формате ДД.ММ или словом «сегодня»/«завтра»."
+            "Шаг 2/8. Введите дату встречи в формате ДД.ММ.ГГГ или словом «сегодня»/«завтра»."
             + BACK_HINT
         )
         return BOOK_DATE
@@ -645,7 +645,7 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "Шаг 5/8. Введите тему встречи (например, «Интервью», «Планёрка отдела»)\n"
-        "Или отправьте «-», чтобы пропустить.",
+        "Или отправьте «-», чтобы пропустить."
         + BACK_HINT
     )
     return BOOK_TOPIC
