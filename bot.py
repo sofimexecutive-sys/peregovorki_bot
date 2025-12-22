@@ -80,7 +80,10 @@ DB_PATH = os.getenv("DB_PATH", "/_data/bookings.sqlite3")
 
 DB = None
 
-
+BACK_HINT = (
+    "\n\nНа любом шаге бронирования можно написать «Назад», "
+    "чтобы вернуться на предыдущий шаг."
+)
 # ---------------------- ХЕЛПЕРЫ ПО ВРЕМЕНИ ----------------------
 def now() -> datetime:
     """Текущие дата/время (на сервере)."""
@@ -456,6 +459,7 @@ async def book_choose_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"Шаг 2/8. Вы выбрали: {room}\n\n"
         "Введите дату в формате ДД.ММ.ГГГГ или отправьте «Сегодня» / «Завтра».",
+        + BACK_HINT,
         reply_markup=None,
     )
     return BOOK_DATE
@@ -486,6 +490,7 @@ async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Не получается распознать дату 😕\n"
             "Введите в формате ДД.ММ.ГГГГ или напишите «Сегодня» / «Завтра»."
+            + BACK_HINT
         )
         return BOOK_DATE
 
@@ -525,6 +530,7 @@ async def book_choose_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append(
         "\nШаг 3/8. Введите время начала встречи в формате ЧЧ:ММ (например, 15:00)."
+        + BACK_HINT
     )
 
     await update.message.reply_text("\n".join(lines))
@@ -538,6 +544,7 @@ async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking.pop("start_ts", None)
         await update.message.reply_text(
             "Шаг 2/8. Введите дату встречи в формате ДД.ММ или словом «сегодня»/«завтра».",
+            + BACK_HINT
         )
         return BOOK_DATE
 
@@ -561,6 +568,7 @@ async def book_choose_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "Шаг 4/8. Введите время окончания встречи в формате ЧЧ:ММ (например, 16:00)."
+        + BACK_HINT
     )
     return BOOK_END
 
@@ -572,6 +580,7 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking.pop("end_ts", None)
         await update.message.reply_text(
             "Шаг 3/8. Введите время начала встречи (по Москве), например 10:00.",
+            + BACK_HINT
         )
         return BOOK_START
 
@@ -637,6 +646,7 @@ async def book_choose_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Шаг 5/8. Введите тему встречи (например, «Интервью», «Планёрка отдела»)\n"
         "Или отправьте «-», чтобы пропустить.",
+        + BACK_HINT
     )
     return BOOK_TOPIC
 
@@ -648,6 +658,7 @@ async def book_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         booking.pop("topic", None)
         await update.message.reply_text(
             "Шаг 4/8. Введите время окончания встречи (по Москве), например 12:00.",
+            + BACK_HINT
         )
         return BOOK_END
 
@@ -657,6 +668,7 @@ async def book_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "Шаг 6/8. Введите вашу фамилию и имя (например, «Иванов Иван»)."
+        + BACK_HINT
     )
     return BOOK_NAME
 
@@ -669,6 +681,7 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Шаг 5/8. Кратко опишите тему встречи. "
             "Если темы нет, можно оставить дефис «-».",
+            + BACK_HINT
         )
         return BOOK_TOPIC
 
@@ -684,6 +697,7 @@ async def book_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Шаг 7/8. Введите ваш ник в Telegram (без @) или телефон.\n"
         f"Если хотите использовать {username_hint}, отправьте «-».",
+        + BACK_HINT
     )
     return BOOK_CONTACT
 
@@ -696,6 +710,7 @@ async def book_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Шаг 6/8. Введите фамилию и имя участника встречи "
             "(или того, кто отвечает за бронь).",
+            + BACK_HINT
         )
         return BOOK_NAME
 
