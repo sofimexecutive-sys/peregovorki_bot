@@ -31,6 +31,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# HTTP-логи Telegram API содержат BOT_TOKEN в URL; не пишем их на уровне INFO.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # ---------------------- КОНСТАНТЫ ----------------------
 
 # Состояния диалога бронирования
@@ -1340,8 +1343,9 @@ async def admin_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- Удаление брони по ID ----------------
 
 async def delete_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменить бронь и уведомить общий чат после успешной отмены."""
     user = update.effective_user
-    is_admin = user.id in ADMIN_IDS
+    admin_user = user.id in ADMIN_IDS
 
     if not context.args:
         await update.message.reply_text(
@@ -1358,37 +1362,44 @@ async def delete_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     now_ts = int(time.time())
-
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    if is_admin:
-        # Админ может удалить любую бронь
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.cursor()
+        # Сохраняем детали для уведомления ДО отметки брони как отмененной.
         cursor.execute(
-            """
-            UPDATE bookings
-            SET canceled = 1, canceled_at = ?
-            WHERE id = ? AND canceled = 0
-            """,
-            (now_ts, booking_id),
+            "SELECT * FROM bookings WHERE id = ? AND canceled = 0",
+            (booking_id,),
         )
-    else:
-        # Обычный пользователь — только свои
-        cursor.execute(
-            """
-            UPDATE bookings
-            SET canceled = 1, canceled_at = ?
-            WHERE id = ? AND user_id = ? AND canceled = 0
-            """,
-            (now_ts, booking_id, user.id),
-        )
+        row = cursor.fetchone()
 
-    conn.commit()
-    updated = cursor.rowcount
-    conn.close()
+        if admin_user:
+            # Администратор может отменить любую активную бронь.
+            cursor.execute(
+                """
+                UPDATE bookings
+                SET canceled = 1, canceled_at = ?
+                WHERE id = ? AND canceled = 0
+                """,
+                (now_ts, booking_id),
+            )
+        else:
+            # Пользователь может отменить только собственную бронь.
+            cursor.execute(
+                """
+                UPDATE bookings
+                SET canceled = 1, canceled_at = ?
+                WHERE id = ? AND user_id = ? AND canceled = 0
+                """,
+                (now_ts, booking_id, user.id),
+            )
+        updated = cursor.rowcount
+        conn.commit()
+    finally:
+        conn.close()
 
     if updated == 0:
-        if is_admin:
+        if admin_user:
             msg = "Не нашла активную бронь с таким ID."
         else:
             msg = (
@@ -1398,14 +1409,44 @@ async def delete_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
-    # Убираем напоминания, если они есть
+    # Очищаем запланированные напоминания по отмененной брони.
     jobs_removed = 0
-    for job in context.application.job_queue.get_jobs_by_name(f"reminder_{booking_id}"):
-        job.schedule_removal()
-        jobs_removed += 1
+    job_queue = context.application.job_queue
+    if job_queue is not None:
+        for job in job_queue.get_jobs_by_name(f"reminder_{booking_id}"):
+            job.schedule_removal()
+            jobs_removed += 1
     logger.info("Deleted booking %s, removed %s reminder jobs", booking_id, jobs_removed)
-
     await update.message.reply_text("Готово, бронь удалена.")
+
+    # Этот обработчик обслуживает обе команды: /del и /cancel_booking.
+    # Раньше уведомление было лишь в неиспользуемой cancel_booking_command.
+    if GROUP_CHAT_ID is None:
+        logger.warning("GROUP_CHAT_ID не указан: уведомление об отмене брони %s пропущено", booking_id)
+        return
+
+    if row is None:
+        logger.warning("Нет данных брони %s для уведомления общего чата", booking_id)
+        return
+
+    meeting = (
+        f"{row['room']}, {format_dt_range(row['start_ts'], row['end_ts'])}\n"
+        f"Тема: {row['topic'] or '—'}\n"
+        f"Забронировал: {row['user_full_name'] or '—'} "
+        f"({row['user_contact'] or '—'})"
+    )
+    text_group = (
+        "❌ Бронь переговорки отменена:\n\n"
+        f"{meeting}\n"
+        f"ID брони: {booking_id}"
+    )
+    try:
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text_group)
+    except Exception as exc:
+        logger.warning("Не удалось уведомить чат об отмене брони %s: %s", booking_id, exc)
+    else:
+        logger.info("Уведомление об отмене брони %s отправлено в общий чат", booking_id)
+
 
 async def export_bookings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выгрузка всей таблицы bookings в CSV. Только для админов, только в личке."""
